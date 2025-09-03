@@ -149,7 +149,7 @@ export default function Home() {
         </div>
       )}
       
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 xl:grid-cols-1 gap-8">
         {/* Left Column - Form */}
         <div className="space-y-6">
           <div className="bg-white p-6 rounded-lg shadow-lg">
@@ -219,9 +219,10 @@ export default function Home() {
             <div className="border-2 border-gray-200 rounded-lg overflow-hidden bg-gray-50">
               {previewHtml ? (
                 <div 
-                  className="w-full h-[400px] overflow-auto custom-scrollbar flex items-center justify-center"
+                  className="w-full! h-[400px] overflow-auto custom-scrollbar flex items-center justify-center"
                   style={{
-                    minHeight: templateDimensions ? `${Math.min(templateDimensions.height / 2, 400)}px` : '400px'
+                    minHeight: templateDimensions ? `${Math.min(templateDimensions.height / 2, 400)}px` : '400px',
+                    minWidth: '100%'
                   }}
                 >
                   <div 
@@ -305,12 +306,12 @@ export default function Home() {
                 >
                   Download Image
                 </button>
-                <button
+                {/* <button
                   onClick={() => setShowComparison(!showComparison)}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium btn-hover"
                 >
                   {showComparison ? 'Hide' : 'Show'} Comparison
-                </button>
+                </button> */}
               </div>
             </div>
           )}
