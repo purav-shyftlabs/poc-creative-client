@@ -202,6 +202,10 @@ export default function Home() {
         <div className="space-y-6">
           {/* Left Panel - Creative Brief */}
           <div className="space-y-6">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Update Pre-Generated Template</h2>
+              <p className="text-sm text-gray-600 mt-1">Modify the template to fit your needs</p>
+            </div>
             <div className="border border-gray-200 rounded-lg bg-white">
               <div className="p-6 border-b border-gray-200">
                 <h2 className="text-lg font-medium text-gray-900">Creative Brief</h2>
@@ -228,7 +232,7 @@ export default function Home() {
                 <button 
                   type="button"
                   onClick={handleGenerate}
-                  disabled={imageLoading}
+                  disabled={imageLoading || !prompt.trim()}
                   className="bg-black cursor-pointer text-white px-4 py-3 rounded-lg text-sm font-medium hover:bg-gray-800 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                 >
                   {imageLoading ? (
