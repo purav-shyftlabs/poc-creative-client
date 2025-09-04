@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 
 export default function Home() {
-  const [prompt, setPrompt] = useState("Create a modern banner ad with a catchy headline, product description, and call-to-action button");
+  const [prompt, setPrompt] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [template, setTemplate] = useState("");
   const [loading, setLoading] = useState(true);
@@ -161,9 +161,10 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
-              <div className="text-xl font-bold text-gray-900">
+              <a href="#" className="text-md font-bold text-gray-900 flex items-center gap-x-12">
+                <img src="https://trycarter.com/images/carter-logo.svg" alt="Creative Studio" width={102} height={82} />
                 Creative Studio
-              </div>
+              </a>
             </div>
             <div className="flex items-center space-x-2 border border-gray-200 rounded-lg p-2 px-4 hover:bg-gray-100 transition-colors cursor-pointer">
               <div className="w-8 h-8 bg-gray-900 rounded-full flex items-center justify-center">
