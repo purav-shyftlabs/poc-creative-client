@@ -1,5 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
+import axios from "axios";
+import Navbar from "./Components/Navbar";
 
 export default function Home() {
   const [prompt, setPrompt] = useState("");
@@ -14,25 +16,53 @@ export default function Home() {
   const [imageMetadata, setImageMetadata] = useState(null);
   const [templateDimensions, setTemplateDimensions] = useState(null);
   const [activeTab, setActiveTab] = useState("preview");
+  
 
   useEffect(() => {
-    // Fetch default template from backend
-    fetch("http://localhost:8000/template/default")
-      .then(res => res.json())
-      .then(data => {
-        setTemplate(data.template);
+    // Check for template parameters in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const templateParam = urlParams.get('template');
+    const dimensionsParam = urlParams.get('dimensions');
+
+    if (templateParam && dimensionsParam) {
+      try {
+        const template = decodeURIComponent(templateParam);
+        const dimensions = JSON.parse(decodeURIComponent(dimensionsParam));
+        
+        setTemplate(template);
+        setTemplateDimensions(dimensions);
         setLoading(false);
-        renderPreview(data.template, prompt);
+        renderPreview(template, prompt);
+        
+        // Clear URL parameters
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } catch (err) {
+        console.error("Failed to parse template parameters:", err);
+        // Fall back to default template
+        loadDefaultTemplate();
+      }
+    } else {
+      loadDefaultTemplate();
+    }
+  }, []);
+
+  const loadDefaultTemplate = () => {
+    // Fetch default template from backend
+    axios.get("http://localhost:8000/template/default")
+      .then(response => {
+        setTemplate(response.data.template);
+        setLoading(false);
+        renderPreview(response.data.template, prompt);
         
         // Get template dimensions
-        fetchTemplateDimensions(data.template);
+        fetchTemplateDimensions(response.data.template);
       })
       .catch(err => {
         console.error("Failed to fetch template:", err);
         setError("Failed to load template. Please refresh the page.");
         setLoading(false);
       });
-  }, []);
+  };
 
   const renderPreview = (templateText, promptText) => {
     setPreviewHtml(templateText);
@@ -40,17 +70,15 @@ export default function Home() {
 
   const fetchTemplateDimensions = async (templateText) => {
     try {
-      const res = await fetch("http://localhost:8000/template/dimensions", {
-        method: "GET",
+      const response = await axios.get("http://localhost:8000/template/dimensions", {
+      }, {
         headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({ template: templateText })
+          "Content-Type": "application/json",
+        }
       });
       
-      if (res.ok) {
-        const data = await res.json();
-        setTemplateDimensions(data);
+      if (response.status === 200) {
+        setTemplateDimensions(response.data);
       }
     } catch (err) {
       console.error("Failed to fetch template dimensions:", err);
@@ -68,17 +96,14 @@ export default function Home() {
     formData.append("prompt", prompt);
     
     try {
-      const res = await fetch("http://localhost:8000/generate-image/", {
-        method: "POST",
-        body: formData,
+      const response = await axios.post("http://localhost:8000/generate-image/", formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        responseType: 'blob',
       });
       
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.detail || `HTTP error! status: ${res.status}`);
-      }
-      
-      const blob = await res.blob();
+      const blob = response.data;
       const url = URL.createObjectURL(blob);
       setImageUrl(url);
       
@@ -99,11 +124,13 @@ export default function Home() {
       
     } catch (error) {
       console.error("Error generating image:", error);
-      setError(error.message || "Failed to generate image. Please check your connection and try again.");
+      const errorMessage = error.response?.data?.detail || error.message || "Failed to generate image. Please check your connection and try again.";
+      setError(errorMessage);
     } finally {
       setImageLoading(false);
     }
   };
+
 
   const handleDownload = () => {
     if (imageUrl) {
@@ -121,12 +148,11 @@ export default function Home() {
   const zoomOut = () => setImageZoom(prev => Math.max(prev / 1.2, 0.5));
 
   const resetTemplate = () => {
-    fetch("http://localhost:8000/template/default")
-      .then(res => res.json())
-      .then(data => {
-        setTemplate(data.template);
-        renderPreview(data.template, prompt);
-        fetchTemplateDimensions(data.template);
+    axios.get("http://localhost:8000/template/default")
+      .then(response => {
+        setTemplate(response.data.template);
+        renderPreview(response.data.template, prompt);
+        fetchTemplateDimensions(response.data.template);
         setActiveTab("preview");
       })
       .catch(err => {
@@ -157,26 +183,8 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-white">
       {/* Header */}
-      <div className="border-b border-gray-200 bg-white sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <a href="#" className="text-md font-bold text-gray-900 flex items-center gap-x-12">
-                <img src="https://trycarter.com/images/carter-logo.svg" alt="Creative Studio" width={102} height={82} />
-                Creative Studio
-              </a>
-            </div>
-            <div className="flex items-center space-x-2 border border-gray-200 rounded-lg p-2 px-4 hover:bg-gray-100 transition-colors cursor-pointer">
-              <div className="w-8 h-8 bg-gray-900 rounded-full flex items-center justify-center">
-                <span className="text-white text-xs font-medium">U</span>
-              </div>
-              <div className="text-sm text-gray-700 hover:text-black transition-colors">
-                User
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <Navbar />
+  
 
       <div className="max-w-7xl mx-auto p-6 gap-y-6">
         {error && (
@@ -189,6 +197,7 @@ export default function Home() {
             </div>
           </div>
         )}
+
         
         <div className="space-y-6">
           {/* Left Panel - Creative Brief */}
@@ -302,9 +311,7 @@ export default function Home() {
                         <div className="flex items-center justify-center p-8">
                           <div 
                             className="border border-gray-300 bg-white shadow-sm"
-                            style={{
-                              maxWidth: templateDimensions ? `${Math.min(templateDimensions.width / 1.2, 600)}px` : '100%',
-                            }}
+                  
                             dangerouslySetInnerHTML={{ __html: previewHtml }}
                           />
                         </div>
