@@ -15,10 +15,21 @@ export default function Home() {
   const [showComparison, setShowComparison] = useState(false);
   const [imageMetadata, setImageMetadata] = useState(null);
   const [templateDimensions, setTemplateDimensions] = useState(null);
-  const [activeTab, setActiveTab] = useState("preview");
+  const [activeTab, setActiveTab] = useState("result");
+  const [sessionId, setSessionId] = useState("");
+  const [chatHistory, setChatHistory] = useState([]);
+  const [editLoading, setEditLoading] = useState(false);
   
 
   useEffect(() => {
+    // Get or create a persistent session ID
+    let currentSessionId = localStorage.getItem('creative_session_id');
+    if (!currentSessionId) {
+      currentSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      localStorage.setItem('creative_session_id', currentSessionId);
+    }
+    setSessionId(currentSessionId);
+    
     // Check for template parameters in URL
     const urlParams = new URLSearchParams(window.location.search);
     const templateParam = urlParams.get('template');
@@ -53,7 +64,7 @@ export default function Home() {
         setTemplate(response.data.template);
         setLoading(false);
         renderPreview(response.data.template, prompt);
-        
+        ``
         // Get template dimensions
         fetchTemplateDimensions(response.data.template);
       })
@@ -107,6 +118,32 @@ export default function Home() {
       const url = URL.createObjectURL(blob);
       setImageUrl(url);
       
+      // Save this generation to chat history
+      if (sessionId) {
+        try {
+          const saveFormData = new FormData();
+          saveFormData.append("session_id", sessionId);
+          saveFormData.append("user_message", prompt);
+          saveFormData.append("ai_response", "Banner generated successfully");
+          saveFormData.append("template_html", template);
+          
+          await axios.post("http://localhost:8000/chat/save", saveFormData);
+          console.log(`Saved initial generation to chat history for session: ${sessionId}`);
+          
+          // Update local chat history
+          setChatHistory(prev => [...prev, {
+            id: Date.now(),
+            user_message: prompt,
+            ai_response: "Banner generated successfully",
+            created_at: new Date().toISOString()
+          }]);
+        } catch (saveError) {
+          console.error("Error saving chat history:", saveError);
+        }
+      } else {
+        console.warn("No session ID available for saving chat history");
+      }
+      
       // Get image metadata
       const img = new Image();
       img.onload = () => {
@@ -116,9 +153,6 @@ export default function Home() {
           size: blob.size,
           type: blob.type
         });
-        
-        // Automatically switch to result tab when image is generated
-        setActiveTab("result");
       };
       img.src = url;
       
@@ -147,13 +181,95 @@ export default function Home() {
   const zoomIn = () => setImageZoom(prev => Math.min(prev * 1.2, 3));
   const zoomOut = () => setImageZoom(prev => Math.max(prev / 1.2, 0.5));
 
+  const handleEditWithContext = async () => {
+    if (!prompt.trim() || !sessionId) return;
+    
+    setEditLoading(true);
+    setError("");
+    
+    const formData = new FormData();
+    formData.append("session_id", sessionId);
+    formData.append("template", template);
+    formData.append("prompt", prompt);
+    
+    try {
+      const response = await axios.post("http://localhost:8000/chat/generate-with-context/", formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      
+      const newTemplate = response.data.template;
+      setTemplate(newTemplate);
+      renderPreview(newTemplate, prompt);
+      
+      // Clear the generated image so it shows the updated template preview
+      setImageUrl("");
+      setImageMetadata(null);
+      
+      // The chat history is already saved to database by the backend endpoint
+      // Just update local state to reflect the new entry
+      setChatHistory(prev => [...prev, {
+        id: Date.now(),
+        user_message: prompt,
+        ai_response: "Template updated successfully",
+        created_at: new Date().toISOString()
+      }]);
+      
+      console.log(`Template updated with context for session: ${sessionId}`);
+      
+      // Clear the prompt
+      setPrompt("");
+      
+    } catch (error) {
+      console.error("Error editing with context:", error);
+      const errorMessage = error.response?.data?.detail || error.message || "Failed to edit template. Please try again.";
+      setError(errorMessage);
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const loadChatHistory = async () => {
+    if (!sessionId) return;
+    
+    try {
+      const response = await axios.get(`http://localhost:8000/chat/history/${sessionId}`);
+      const history = response.data.history || [];
+      setChatHistory(history);
+      console.log(`Loaded ${history.length} chat history entries for session: ${sessionId}`);
+    } catch (error) {
+      console.error("Error loading chat history:", error);
+      // If there's an error loading history, start with empty array
+      setChatHistory([]);
+    }
+  };
+
+  const clearChatHistory = async () => {
+    if (!sessionId) return;
+    
+    try {
+      await axios.delete(`http://localhost:8000/chat/clear/${sessionId}`);
+      setChatHistory([]);
+      
+      // Clear the session ID from localStorage to start fresh
+      localStorage.removeItem('creative_session_id');
+      
+      // Generate a new session ID
+      const newSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      localStorage.setItem('creative_session_id', newSessionId);
+      setSessionId(newSessionId);
+    } catch (error) {
+      console.error("Error clearing chat history:", error);
+    }
+  };
+
   const resetTemplate = () => {
     axios.get("http://localhost:8000/template/default")
       .then(response => {
         setTemplate(response.data.template);
         renderPreview(response.data.template, prompt);
         fetchTemplateDimensions(response.data.template);
-        setActiveTab("preview");
       })
       .catch(err => {
         console.error("Failed to reset template:", err);
@@ -166,6 +282,12 @@ export default function Home() {
       renderPreview(template, prompt);
     }
   }, [template, prompt]);
+
+  useEffect(() => {
+    if (sessionId) {
+      loadChatHistory();
+    }
+  }, [sessionId]);
 
   if (loading) {
     return (
@@ -213,6 +335,33 @@ export default function Home() {
               </div>
               
               <div className="p-6 space-y-6">
+                {/* Chat History */}
+                {chatHistory.length > 0 && (
+                  <div className="border border-gray-200 rounded-lg bg-gray-50 p-4">
+                    <div className="flex justify-between items-center mb-3">
+                      <h4 className="text-sm font-medium text-gray-900">Conversation History</h4>
+                      <button 
+                        onClick={clearChatHistory}
+                        className="text-xs text-gray-600 hover:text-red-600 border border-gray-300 px-2 py-1 rounded transition-colors"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <div className="space-y-2 max-h-24 overflow-y-auto">
+                      {chatHistory.map((chat, index) => (
+                        <div key={index} className="text-xs">
+                          <div className="text-gray-600">
+                            <strong>You:</strong> {chat.user_message}
+                          </div>
+                          <div className="text-gray-500 ml-2">
+                            <strong>AI:</strong> {chat.ai_response}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-sm font-medium text-gray-900 mb-2">
                     Project description
@@ -220,28 +369,31 @@ export default function Home() {
                   <textarea
                     className="w-full p-3 border border-gray-300 rounded-lg focus:border-black focus:ring-1 focus:ring-black transition-colors resize-none text-sm"
                     rows="6"
-                    placeholder="Describe your banner ad in detail..."
+                    placeholder={imageUrl ? "Describe your changes to the banner..." : "Describe your banner ad in detail..."}
                     value={prompt}
                     onChange={e => setPrompt(e.target.value)}
                   />
                   <div className="text-xs text-gray-500 mt-1">
                     {prompt.length} characters
+                    {imageUrl && (
+                      <span className="ml-2 text-blue-600">💡 AI will remember your previous requests</span>
+                    )}
                   </div>
                 </div>
                 
                 <button 
                   type="button"
-                  onClick={handleGenerate}
-                  disabled={imageLoading || !prompt.trim()}
+                  onClick={imageUrl ? handleEditWithContext : handleGenerate}
+                  disabled={imageLoading || editLoading || !prompt.trim()}
                   className="bg-black cursor-pointer text-white px-4 py-3 rounded-lg text-sm font-medium hover:bg-gray-800 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                 >
-                  {imageLoading ? (
+                  {(imageLoading || editLoading) ? (
                     <div className="flex items-center justify-center">
                       <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
-                      Generating...
+                      {imageUrl ? "Editing..." : "Generating..."}
                     </div>
                   ) : (
-                    "Generate banner"
+                    imageUrl ? "Apply Changes" : "Generate banner"
                   )}
                 </button>
 
@@ -260,108 +412,18 @@ export default function Home() {
            
           </div>
 
-          {/* Center Panel - Preview & Results */}
+          {/* Center Panel - Results */}
           <div className="xl:col-span-9 space-y-6">
-            {/* Tab Navigation */}
             <div className="border border-gray-200 rounded-lg bg-white">
-              <div className="flex border-b border-gray-200">
-                <button
-                  onClick={() => setActiveTab("preview")}
-                  className={`px-6 py-3 text-sm font-medium transition-colors ${
-                    activeTab === "preview" 
-                      ? "text-black border-b-2 border-black" 
-                      : "text-gray-600 hover:text-black"
-                  }`}
-                >
-                  Preview
-                </button>
-                <button
-                  onClick={() => setActiveTab("code")}
-                  className={`px-6 py-3 text-sm font-medium transition-colors ${
-                    activeTab === "code" 
-                      ? "text-black border-b-2 border-black" 
-                      : "text-gray-600 hover:text-black"
-                  }`}
-                >
-                  Code
-                </button>
-                {imageUrl && (
-                  <button
-                    onClick={() => setActiveTab("result")}
-                    className={`px-6 py-3 text-sm font-medium transition-colors ${
-                      activeTab === "result" 
-                        ? "text-black border-b-2 border-black" 
-                        : "text-gray-600 hover:text-black"
-                    }`}
-                  >
-                    Result
-                  </button>
-                )}
-              </div>
 
               <div className="p-6">
-                {activeTab === "preview" && (
-                  <div>
-                    <div className="mb-4 flex justify-between items-center">
-                      <h3 className="text-base font-medium text-gray-900">Template preview</h3>
-                      {templateDimensions && (
-                        <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                          {templateDimensions.width} × {templateDimensions.height}
-                        </span>
-                      )}
-                    </div>
-                    <div className="border border-gray-200 rounded-lg bg-gray-50">
-                      {previewHtml ? (
-                        <div className="flex items-center justify-center p-8">
-                          <div 
-                            className="border border-gray-300 bg-white shadow-sm"
-                  
-                            dangerouslySetInnerHTML={{ __html: previewHtml }}
-                          />
-                        </div>
-                      ) : (
-                        <div className="h-64 flex items-center justify-center text-gray-500">
-                          <div className="text-center">
-                            <div className="text-sm">Template preview will appear here</div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === "code" && (
-                  <div>
-                    <div className="mb-4 flex justify-between items-center">
-                      <h3 className="text-base font-medium text-gray-900">HTML template</h3>
-                      <div className="flex items-center space-x-2">
-                        <button 
-                          onClick={resetTemplate}
-                          className="text-xs text-gray-600 hover:text-black border border-gray-300 px-3 py-1 rounded transition-colors"
-                        >
-                          Reset
-                        </button>
-                        <button className="text-xs text-gray-600 hover:text-black border border-gray-300 px-3 py-1 rounded transition-colors">
-                          Copy
-                        </button>
-                      </div>
-                    </div>
-                    <div className="relative">
-                      <textarea
-                        className="w-full p-4 border border-gray-200 rounded-lg font-mono text-xs bg-gray-50 focus:bg-white focus:border-black focus:ring-1 focus:ring-black transition-colors"
-                        rows="16"
-                        value={template}
-                        onChange={e => setTemplate(e.target.value)}
-                        placeholder="HTML template will appear here..."
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === "result" && imageUrl && (
-                  <div>
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-base font-medium text-gray-900">Generated banner</h3>
+                {/* Result View */}
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-base font-medium text-gray-900">
+                      {imageUrl ? "Generated banner" : "Template preview"}
+                    </h3>
+                    {imageUrl && (
                       <div className="flex items-center space-x-1">
                         <button
                           onClick={zoomOut}
@@ -389,32 +451,41 @@ export default function Home() {
                           </svg>
                         </button>
                       </div>
-                    </div>
-                    
-                    <div className="border border-gray-200 rounded-lg bg-gray-50">
-                      <div className="overflow-auto max-h-96 flex items-center justify-center p-6">
+                    )}
+                  </div>
+                  
+                  <div className="border border-gray-200 rounded-lg bg-gray-50">
+                    <div className="overflow-auto max-h-96 flex items-center justify-center p-6">
+                      {imageUrl ? (
                         <img 
                           src={imageUrl} 
                           className="max-w-full max-h-full transition-transform duration-200 border border-gray-200"
                           style={{ transform: `scale(${imageZoom})`, transformOrigin: 'center' }}
                           alt="Generated Banner" 
                         />
-                      </div>
+                      ) : (
+                        <div 
+                          className="border border-gray-300 bg-white shadow-sm"
+                          dangerouslySetInnerHTML={{ __html: previewHtml }}
+                        />
+                      )}
                     </div>
+                  </div>
 
-                    {imageMetadata && (
-                      <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                        <div className="grid grid-cols-2 gap-4 text-sm text-gray-700">
-                          <div>
-                            <span className="font-medium">Dimensions:</span> {imageMetadata.width} × {imageMetadata.height}
-                          </div>
-                          <div>
-                            <span className="font-medium">Size:</span> {(imageMetadata.size / 1024).toFixed(1)} KB
-                          </div>
+                  {imageMetadata && (
+                    <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                      <div className="grid grid-cols-2 gap-4 text-sm text-gray-700">
+                        <div>
+                          <span className="font-medium">Dimensions:</span> {imageMetadata.width} × {imageMetadata.height}
+                        </div>
+                        <div>
+                          <span className="font-medium">Size:</span> {(imageMetadata.size / 1024).toFixed(1)} KB
                         </div>
                       </div>
-                    )}
+                    </div>
+                  )}
 
+                  {imageUrl && (
                     <div className="mt-6 flex space-x-3">
                       <button
                         onClick={handleDownload}
@@ -429,10 +500,11 @@ export default function Home() {
                         {showComparison ? 'Hide comparison' : 'Compare'}
                       </button>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </div>
+
 
             {showComparison && imageUrl && (
               <div className="border border-gray-200 rounded-lg bg-white">
