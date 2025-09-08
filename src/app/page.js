@@ -59,14 +59,14 @@ export default function Home() {
 
   const loadDefaultTemplate = () => {
     // Fetch default template from backend
-    axios.get("http://localhost:8000/template/default")
+    axios.get("http://localhost:8000/api/template/default")
       .then(response => {
-        setTemplate(response.data.template);
+        setTemplate(response.data.template.html);
         setLoading(false);
-        renderPreview(response.data.template, prompt);
+        renderPreview(response.data.template.html, prompt);
         ``
         // Get template dimensions
-        fetchTemplateDimensions(response.data.template);
+        fetchTemplateDimensions(response.data.template.html);
       })
       .catch(err => {
         console.error("Failed to fetch template:", err);
@@ -81,13 +81,13 @@ export default function Home() {
 
   const fetchTemplateDimensions = async (templateText) => {
     try {
-      const response = await axios.get("http://localhost:8000/template/dimensions", {
+      const response = await axios.get("http://localhost:8000/api/template/dimensions", {
       }, {
         headers: {
           "Content-Type": "application/json",
         }
       });
-      
+      console.log(response.data);
       if (response.status === 200) {
         setTemplateDimensions(response.data);
       }
@@ -101,13 +101,71 @@ export default function Home() {
     setError("");
     setImageUrl("");
     setImageMetadata(null);
+  
+    const formData = new FormData();
+  
+    formData.append("session_id", sessionId);
+    formData.append("prompt", prompt);
+    formData.append("platform", "Facebook"); // Make sure this is included
+    formData.append("size_name", "Square");
+    formData.append("template", template);
+  
+    // Match the curl structure
+    const sizeConfig = {
+      name: "Square",
+      width: templateDimensions.width,
+      height: templateDimensions.height
+    };
+  
+    formData.append("size_config", JSON.stringify(sizeConfig)); // <-- this is correct
+  
+    try {
+      const response = await axios.post("http://localhost:8000/api/chat/generate-initial", formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+  
+      const newTemplate = response.data.template;
+      setTemplate(newTemplate);
+      renderPreview(newTemplate, prompt);
+  
+      setChatHistory(prev => [...prev, {
+        id: Date.now(),
+        user_message: prompt,
+        ai_response: "Initial template generated successfully",
+        created_at: new Date().toISOString()
+      }]);
+  
+      console.log(`Initial template generated for session: ${sessionId}`);
+    } catch (error) {
+      console.error("Error generating template:", error);
+      const errorMessage = error.response?.data?.detail || error.message || "Failed to generate template. Please check your connection and try again.";
+      setError(errorMessage);``
+    } finally {
+      setImageLoading(false);
+    }
+  };
+  
+
+
+  const handleDownload = async () => {
+    if (!template) {
+      setError("No template available to download");
+      return;
+    }
+    
+    setImageLoading(true);
+    setError("");
+    
+    console.log("Converting HTML template to image using Playwright...");
     
     const formData = new FormData();
     formData.append("template", template);
-    formData.append("prompt", prompt);
+    formData.append("prompt", "Generate image for download");
     
     try {
-      const response = await axios.post("http://localhost:8000/generate-image/", formData, {
+      const response = await axios.post("http://localhost:8000/api/chat/generate-image/", formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -116,64 +174,26 @@ export default function Home() {
       
       const blob = response.data;
       const url = URL.createObjectURL(blob);
-      setImageUrl(url);
       
-      // Save this generation to chat history
-      if (sessionId) {
-        try {
-          const saveFormData = new FormData();
-          saveFormData.append("session_id", sessionId);
-          saveFormData.append("user_message", prompt);
-          saveFormData.append("ai_response", "Banner generated successfully");
-          saveFormData.append("template_html", template);
-          
-          await axios.post("http://localhost:8000/chat/save", saveFormData);
-          console.log(`Saved initial generation to chat history for session: ${sessionId}`);
-          
-          // Update local chat history
-          setChatHistory(prev => [...prev, {
-            id: Date.now(),
-            user_message: prompt,
-            ai_response: "Banner generated successfully",
-            created_at: new Date().toISOString()
-          }]);
-        } catch (saveError) {
-          console.error("Error saving chat history:", saveError);
-        }
-      } else {
-        console.warn("No session ID available for saving chat history");
-      }
+      console.log("Image generated successfully, starting download...");
       
-      // Get image metadata
-      const img = new Image();
-      img.onload = () => {
-        setImageMetadata({
-          width: img.naturalWidth,
-          height: img.naturalHeight,
-          size: blob.size,
-          type: blob.type
-        });
-      };
-      img.src = url;
-      
-    } catch (error) {
-      console.error("Error generating image:", error);
-      const errorMessage = error.response?.data?.detail || error.message || "Failed to generate image. Please check your connection and try again.";
-      setError(errorMessage);
-    } finally {
-      setImageLoading(false);
-    }
-  };
-
-
-  const handleDownload = () => {
-    if (imageUrl) {
+      // Create download link
       const link = document.createElement('a');
-      link.href = imageUrl;
+      link.href = url;
       link.download = `creative-banner-${Date.now()}.png`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      
+      // Clean up the blob URL
+      URL.revokeObjectURL(url);
+      
+    } catch (error) {
+      console.error("Error generating image for download:", error);
+      const errorMessage = error.response?.data?.detail || error.message || "Failed to generate image for download. Please try again.";
+      setError(errorMessage);
+    } finally {
+      setImageLoading(false);
     }
   };
 
@@ -193,7 +213,7 @@ export default function Home() {
     formData.append("prompt", prompt);
     
     try {
-      const response = await axios.post("http://localhost:8000/chat/generate-with-context/", formData, {
+      const response = await axios.post("http://localhost:8000/api/chat/generate-with-context/", formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -234,7 +254,7 @@ export default function Home() {
     if (!sessionId) return;
     
     try {
-      const response = await axios.get(`http://localhost:8000/chat/history/${sessionId}`);
+      const response = await axios.get(`http://localhost:8000/api/chat/history/${sessionId}`);
       const history = response.data.history || [];
       setChatHistory(history);
       console.log(`Loaded ${history.length} chat history entries for session: ${sessionId}`);
@@ -249,7 +269,7 @@ export default function Home() {
     if (!sessionId) return;
     
     try {
-      await axios.delete(`http://localhost:8000/chat/clear/${sessionId}`);
+      await axios.delete(`http://localhost:8000/api/chat/clear/${sessionId}`);
       setChatHistory([]);
       
       // Clear the session ID from localStorage to start fresh
@@ -421,77 +441,54 @@ export default function Home() {
                 <div>
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-base font-medium text-gray-900">
-                      {imageUrl ? "Generated banner" : "Template preview"}
+                      {chatHistory.length > 0 ? "Generated Template" : "Template preview"}
                     </h3>
-                    {imageUrl && (
-                      <div className="flex items-center space-x-1">
-                        <button
-                          onClick={zoomOut}
-                          className="p-2 text-gray-600 hover:text-black hover:bg-gray-100 rounded transition-colors"
-                          title="Zoom out"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={resetZoom}
-                          className="px-3 py-2 text-xs text-gray-600 hover:text-black hover:bg-gray-100 rounded transition-colors"
-                          title="Reset zoom"
-                        >
-                          {Math.round(imageZoom * 100)}%
-                        </button>
-                        <button
-                          onClick={zoomIn}
-                          className="p-2 text-gray-600 hover:text-black hover:bg-gray-100 rounded transition-colors"
-                          title="Zoom in"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                          </svg>
-                        </button>
+                    {chatHistory.length > 0 && (
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded">
+                          Ready for download
+                        </span>
                       </div>
                     )}
                   </div>
                   
                   <div className="border border-gray-200 rounded-lg bg-gray-50">
                     <div className="overflow-auto max-h-96 flex items-center justify-center p-6">
-                      {imageUrl ? (
-                        <img 
-                          src={imageUrl} 
-                          className="max-w-full max-h-full transition-transform duration-200 border border-gray-200"
-                          style={{ transform: `scale(${imageZoom})`, transformOrigin: 'center' }}
-                          alt="Generated Banner" 
-                        />
-                      ) : (
-                        <div 
-                          className="border border-gray-300 bg-white shadow-sm"
-                          dangerouslySetInnerHTML={{ __html: previewHtml }}
-                        />
-                      )}
+                      <div 
+                        className="border border-gray-300 bg-white shadow-sm"
+                        dangerouslySetInnerHTML={{ __html: previewHtml }}
+                      />
                     </div>
                   </div>
 
-                  {imageMetadata && (
+                  {templateDimensions && (
                     <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
                       <div className="grid grid-cols-2 gap-4 text-sm text-gray-700">
                         <div>
-                          <span className="font-medium">Dimensions:</span> {imageMetadata.width} × {imageMetadata.height}
+                          <span className="font-medium">Dimensions:</span> {templateDimensions.width} × {templateDimensions.height}
                         </div>
                         <div>
-                          <span className="font-medium">Size:</span> {(imageMetadata.size / 1024).toFixed(1)} KB
+                          <span className="font-medium">Status:</span> {chatHistory.length > 0 ? "Generated" : "Default"}
                         </div>
                       </div>
                     </div>
                   )}
 
-                  {imageUrl && (
+                  {chatHistory.length > 0 && (
                     <div className="mt-6 flex space-x-3">
                       <button
                         onClick={handleDownload}
-                        className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm font-medium"
+                        disabled={imageLoading}
+                        className="bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                       >
-                        Download
+                        {imageLoading ? (
+                          <div className="flex items-center">
+                            <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
+                            Generating...
+                          </div>
+                        ) : (
+                          "Download Image"
+                        )}
                       </button>
                       <button
                         onClick={() => setShowComparison(!showComparison)}
@@ -506,33 +503,21 @@ export default function Home() {
             </div>
 
 
-            {showComparison && imageUrl && (
+            {showComparison && chatHistory.length > 0 && (
               <div className="border border-gray-200 rounded-lg bg-white">
                 <div className="p-4 border-b border-gray-200">
-                  <h3 className="text-base font-medium text-gray-900">Before & after</h3>
+                  <h3 className="text-base font-medium text-gray-900">Template Evolution</h3>
                 </div>
                 <div className="p-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <h4 className="text-sm font-medium text-gray-900 mb-3">Original template</h4>
-                      <div className="border border-gray-200 rounded-lg bg-gray-50 overflow-hidden">
-                        <div 
-                          className="w-full h-32 overflow-hidden flex items-center justify-center"
-                          dangerouslySetInnerHTML={{ __html: previewHtml }}
-                          style={{ transform: 'scale(0.4)', transformOrigin: 'center' }}
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-medium text-gray-900 mb-3">Generated result</h4>
-                      <div className="border border-gray-200 rounded-lg bg-gray-50 overflow-hidden">
-                        <img 
-                          src={imageUrl} 
-                          className="w-full h-32 object-cover"
-                          alt="Generated Banner" 
-                        />
-                      </div>
-                    </div>
+                  <div className="text-sm text-gray-600 mb-4">
+                    This shows how your template has evolved through your edits. Click "Download Image" to generate the final image.
+                  </div>
+                  <div className="border border-gray-200 rounded-lg bg-gray-50 overflow-hidden">
+                    <div 
+                      className="w-full h-32 overflow-hidden flex items-center justify-center"
+                      dangerouslySetInnerHTML={{ __html: previewHtml }}
+                      style={{ transform: 'scale(0.4)', transformOrigin: 'center' }}
+                    />
                   </div>
                 </div>
               </div>
