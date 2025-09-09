@@ -492,7 +492,7 @@ export default function Home() {
                 </div>
                 <div className="p-6">
                   <div className="text-sm text-gray-600 mb-4">
-                    This shows how your template has evolved through your edits. Click Download Image`` to generate the final image.
+                    This shows how your template has evolved through your edits. Click Download Image to generate the final image.
                   </div>
                   <div className="border border-gray-200 rounded-lg bg-gray-50 overflow-hidden">
                     <div 
