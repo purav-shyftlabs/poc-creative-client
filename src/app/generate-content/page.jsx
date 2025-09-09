@@ -1,8 +1,8 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import axios from "axios";
 import Navbar from "../Components/Navbar";
+import { apiEndpoints } from "../../config/api";
 
 export default function GenerateContent() {
   const [newTemplatePrompt, setNewTemplatePrompt] = useState("");
@@ -30,10 +30,7 @@ export default function GenerateContent() {
       const formData = new FormData();
       formData.append("template", template);
       formData.append("prompt", "Generate image preview");
-      const response = await axios.post("http://localhost:8000/api/chat/generate-image/", formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        responseType: 'blob',
-      });
+      const response = await apiEndpoints.generateImage(formData);
       const blob = response.data;
       const url = URL.createObjectURL(blob);
       setGeneratedTemplates(prev => prev.map(t => 
@@ -58,7 +55,7 @@ export default function GenerateContent() {
     setSessionId(currentSessionId);
     
     // Fetch available sizes
-    axios.get("http://localhost:8000/api/platform/sizes")
+    apiEndpoints.getPlatformSizes()
       .then(response => {
         setAvailableSizes(response.data.sizes);
         // Set default size based on selected platform
@@ -81,7 +78,7 @@ export default function GenerateContent() {
     if (!sessionId) return;
     
     try {
-      const response = await axios.get(`http://localhost:8000/api/chat/history/${sessionId}`);
+      const response = await apiEndpoints.getChatHistory(sessionId);
       const history = response.data.history || [];
       setChatHistory(history);
       console.log(`Loaded ${history.length} chat history entries for generate-content session: ${sessionId}`);
@@ -95,7 +92,7 @@ export default function GenerateContent() {
     if (!sessionId) return;
     
     try {
-      await axios.delete(`http://localhost:8000/api/chat/clear/${sessionId}`);
+      await apiEndpoints.clearChatHistory(sessionId);
       setChatHistory([]);
       
       // Clear the session ID from localStorage to start fresh
@@ -154,11 +151,7 @@ export default function GenerateContent() {
           // no-op if serialization fails
         }
 
-        const response = await axios.post("http://localhost:8000/api/chat/generate-content/generate-initial/", formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        });
+        const response = await apiEndpoints.generateContentInitial(formData);
 
         templates.push({
           ...response.data,
@@ -208,12 +201,7 @@ export default function GenerateContent() {
       formData.append("template", template.template);
       formData.append("prompt", "Generate image for download");
 
-      const response = await axios.post("http://localhost:8000/api/chat/generate-image/", formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        responseType: 'blob',
-      });
+      const response = await apiEndpoints.generateImage(formData);
 
       const blob = response.data;
       const url = URL.createObjectURL(blob);
@@ -306,11 +294,7 @@ export default function GenerateContent() {
         // no-op if serialization fails
       }
 
-      const response = await axios.post("http://localhost:8000/api/chat/generate-with-context/", formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      const response = await apiEndpoints.generateWithContext(formData);
 
       const newTemplate = response.data.template;
       

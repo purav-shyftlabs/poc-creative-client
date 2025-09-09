@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
-import axios from "axios";
 import Navbar from "./Components/Navbar";
+import { apiEndpoints } from "../config/api";
 
 export default function Home() {
   const [prompt, setPrompt] = useState("");
@@ -59,12 +59,12 @@ export default function Home() {
 
   const loadDefaultTemplate = () => {
     // Fetch default template from backend
-    axios.get("http://localhost:8000/api/template/default")
+    apiEndpoints.getDefaultTemplate()
       .then(response => {
         setTemplate(response.data.template.html);
         setLoading(false);
         renderPreview(response.data.template.html, prompt);
-        ``
+        
         // Get template dimensions
         fetchTemplateDimensions(response.data.template.html);
       })
@@ -81,13 +81,7 @@ export default function Home() {
 
   const fetchTemplateDimensions = async (templateText) => {
     try {
-      const response = await axios.get("http://localhost:8000/api/template/dimensions", {
-      }, {
-        headers: {
-          "Content-Type": "application/json",
-        }
-      });
-      console.log(response.data);
+      const response = await apiEndpoints.getTemplateDimensions(templateText);
       if (response.status === 200) {
         setTemplateDimensions(response.data);
       }
@@ -120,11 +114,7 @@ export default function Home() {
     formData.append("size_config", JSON.stringify(sizeConfig)); // <-- this is correct
   
     try {
-      const response = await axios.post("http://localhost:8000/api/chat/generate-initial", formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      const response = await apiEndpoints.generateInitial(formData);
   
       const newTemplate = response.data.template;
       setTemplate(newTemplate);
@@ -165,12 +155,7 @@ export default function Home() {
     formData.append("prompt", "Generate image for download");
     
     try {
-      const response = await axios.post("http://localhost:8000/api/chat/generate-image/", formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        responseType: 'blob',
-      });
+      const response = await apiEndpoints.generateImage(formData);
       
       const blob = response.data;
       const url = URL.createObjectURL(blob);
@@ -213,11 +198,7 @@ export default function Home() {
     formData.append("prompt", prompt);
     
     try {
-      const response = await axios.post("http://localhost:8000/api/chat/generate-with-context/", formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      const response = await apiEndpoints.generateWithContext(formData);
       
       const newTemplate = response.data.template;
       setTemplate(newTemplate);
@@ -254,7 +235,7 @@ export default function Home() {
     if (!sessionId) return;
     
     try {
-      const response = await axios.get(`http://localhost:8000/api/chat/history/${sessionId}`);
+      const response = await apiEndpoints.getChatHistory(sessionId);
       const history = response.data.history || [];
       setChatHistory(history);
       console.log(`Loaded ${history.length} chat history entries for session: ${sessionId}`);
@@ -269,7 +250,7 @@ export default function Home() {
     if (!sessionId) return;
     
     try {
-      await axios.delete(`http://localhost:8000/api/chat/clear/${sessionId}`);
+      await apiEndpoints.clearChatHistory(sessionId);
       setChatHistory([]);
       
       // Clear the session ID from localStorage to start fresh
@@ -285,11 +266,12 @@ export default function Home() {
   };
 
   const resetTemplate = () => {
-    axios.get("http://localhost:8000/template/default")
+    apiEndpoints.getDefaultTemplate()
       .then(response => {
-        setTemplate(response.data.template);
-        renderPreview(response.data.template, prompt);
-        fetchTemplateDimensions(response.data.template);
+        const html = response.data?.template?.html || "";
+        setTemplate(html);
+        renderPreview(html, prompt);
+        fetchTemplateDimensions(html);
       })
       .catch(err => {
         console.error("Failed to reset template:", err);
