@@ -1,8 +1,8 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import axios from "axios";
 import Navbar from "../Components/Navbar";
+import { apiEndpoints } from "../../config/api";
 
 export default function GenerateContent() {
   const [newTemplatePrompt, setNewTemplatePrompt] = useState("");
@@ -11,17 +11,51 @@ export default function GenerateContent() {
   const [availableSizes, setAvailableSizes] = useState({});
   const [templateLoading, setTemplateLoading] = useState(false);
   const [generatedTemplates, setGeneratedTemplates] = useState([]);
-  const [generatedImages, setGeneratedImages] = useState({});
-  const [imageGenerationLoading, setImageGenerationLoading] = useState({});
   const [error, setError] = useState("");
   const [editingTemplates, setEditingTemplates] = useState({});
   const [editPrompts, setEditPrompts] = useState({});
   const [editLoading, setEditLoading] = useState({});
+  const [sessionId, setSessionId] = useState("");
+  const [chatHistory, setChatHistory] = useState([]);
+  const [activeTab, setActiveTab] = useState({});
+  
+  // Generate a preview image URL for a given HTML template
+  const generatePreviewForTemplate = async ({ id, template, platform, size }) => {
+    if (!template) return;
+    // Mark loading
+    setGeneratedTemplates(prev => prev.map(t => 
+      t.id === id ? { ...t, previewLoading: true } : t
+    ));
+    try {
+      const formData = new FormData();
+      formData.append("template", template);
+      formData.append("prompt", "Generate image preview");
+      const response = await apiEndpoints.generateImage(formData);
+      const blob = response.data;
+      const url = URL.createObjectURL(blob);
+      setGeneratedTemplates(prev => prev.map(t => 
+        t.id === id ? { ...t, previewUrl: url, previewLoading: false } : t
+      ));
+    } catch (error) {
+      console.error(`Error generating preview image for template ${id}:`, error);
+      setGeneratedTemplates(prev => prev.map(t => 
+        t.id === id ? { ...t, previewUrl: null, previewLoading: false } : t
+      ));
+      setError("Failed to generate preview image. You can still download the image.");
+    }
+  };
 
   useEffect(() => {
-    // Fetch available sizes
+    // Generate a unique session ID for chat context
+    let currentSessionId = localStorage.getItem('generate_content_session_id');
+    if (!currentSessionId) {
+      currentSessionId = `generate_content_session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      localStorage.setItem('generate_content_session_id', currentSessionId);
+    }
+    setSessionId(currentSessionId);
     
-    axios.get("http://localhost:8000/sizes")
+    // Fetch available sizes
+    apiEndpoints.getPlatformSizes()
       .then(response => {
         setAvailableSizes(response.data.sizes);
         // Set default size based on selected platform
@@ -33,6 +67,45 @@ export default function GenerateContent() {
         console.error("Failed to fetch sizes:", err);
       });
   }, []);
+
+  useEffect(() => {
+    if (sessionId) {
+      loadChatHistory();
+    }
+  }, [sessionId]);
+
+  const loadChatHistory = async () => {
+    if (!sessionId) return;
+    
+    try {
+      const response = await apiEndpoints.getChatHistory(sessionId);
+      const history = response.data.history || [];
+      setChatHistory(history);
+      console.log(`Loaded ${history.length} chat history entries for generate-content session: ${sessionId}`);
+    } catch (error) {
+      console.error("Error loading chat history:", error);
+      setChatHistory([]);
+    }
+  };
+
+  const clearChatHistory = async () => {
+    if (!sessionId) return;
+    
+    try {
+      await apiEndpoints.clearChatHistory(sessionId);
+      setChatHistory([]);
+      
+      // Clear the session ID from localStorage to start fresh
+      localStorage.removeItem('generate_content_session_id');
+      
+      // Generate a new session ID
+      const newSessionId = `generate_content_session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      localStorage.setItem('generate_content_session_id', newSessionId);
+      setSessionId(newSessionId);
+    } catch (error) {
+      console.error("Error clearing chat history:", error);
+    }
+  };
 
   const handleGenerateTemplate = async () => {
     if (!newTemplatePrompt.trim()) {
@@ -48,40 +121,65 @@ export default function GenerateContent() {
     setTemplateLoading(true);
     setError("");
     setGeneratedTemplates([]);
-    setGeneratedImages({});
 
     const templates = [];
     const sizeArray = Array.from(selectedSizes);
 
     try {
-      // Generate templates for each selected size
+      // Generate templates for each selected size using chat context
       for (let i = 0; i < sizeArray.length; i++) {
         const sizeName = sizeArray[i];
         
         const formData = new FormData();
+        formData.append("session_id", sessionId);
         formData.append("prompt", newTemplatePrompt);
         formData.append("platform", selectedPlatform);
         formData.append("size_name", sizeName);
+        // Include full chat history for complete context
+        try {
+          formData.append(
+            "chat_history",
+            JSON.stringify(
+              (chatHistory || []).map((entry) => ({
+                user_message: entry.user_message,
+                ai_response: entry.ai_response,
+                created_at: entry.created_at,
+              }))
+            )
+          );
+        } catch (_) {
+          // no-op if serialization fails
+        }
 
-        const response = await axios.post("http://localhost:8000/generate-template/", formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        });
+        const response = await apiEndpoints.generateContentInitial(formData);
 
         templates.push({
           ...response.data,
-          id: `template-${i}`,
-          status: 'success'
+          id: `template-${Date.now()}-${i}`, // More unique ID for better tracking
+          status: 'success',
+          previewUrl: null,
+          previewLoading: true,
         });
       }
 
       setGeneratedTemplates(templates);
+      // Generate preview images for each template (non-blocking)
+      templates.forEach((t) => {
+        generatePreviewForTemplate({
+          id: t.id,
+          template: t.template,
+          platform: t.platform,
+          size: t.size,
+        });
+      });
       
-      // Automatically generate images for all templates
-      for (const template of templates) {
-        await generateImageForTemplate(template);
-      }
+      // Update local chat history
+      setChatHistory(prev => [...prev, {
+        id: Date.now(),
+        user_message: newTemplatePrompt,
+        ai_response: "Templates generated successfully",
+        created_at: new Date().toISOString()
+      }]);
       
       // Clear the form
       setNewTemplatePrompt("");
@@ -98,39 +196,31 @@ export default function GenerateContent() {
   const generateImageForTemplate = async (template) => {
     if (!template) return;
 
-    setImageGenerationLoading(prev => ({ ...prev, [template.id]: true }));
-
     try {
       const formData = new FormData();
       formData.append("template", template.template);
-      formData.append("prompt", newTemplatePrompt);
+      formData.append("prompt", "Generate image for download");
 
-      const response = await axios.post("http://localhost:8000/generate-image/", formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        responseType: 'blob',
-      });
+      const response = await apiEndpoints.generateImage(formData);
 
       const blob = response.data;
       const url = URL.createObjectURL(blob);
       
-      setGeneratedImages(prev => ({
-        ...prev,
-        [template.id]: {
-          url,
-          width: template.dimensions.width,
-          height: template.dimensions.height,
-          size: blob.size
-        }
-      }));
+      // Create download link
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `creative-banner-${template.platform}-${template.size}-${Date.now()}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Clean up the blob URL
+      URL.revokeObjectURL(url);
 
     } catch (error) {
       console.error(`Error generating image for template ${template.id}:`, error);
       const errorMessage = error.response?.data?.detail || error.message || `Failed to generate image for ${template.platform} ${template.size}`;
       setError(errorMessage);
-    } finally {
-      setImageGenerationLoading(prev => ({ ...prev, [template.id]: false }));
     }
   };
 
@@ -152,17 +242,6 @@ export default function GenerateContent() {
     setSelectedSizes(newSelectedSizes);
   };
 
-  const downloadTemplateImage = (templateId) => {
-    const imageData = generatedImages[templateId];
-    if (imageData) {
-      const link = document.createElement('a');
-      link.href = imageData.url;
-      link.download = `template-${templateId}-${Date.now()}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
-  };
 
   const toggleEditMode = (templateId) => {
     setEditingTemplates(prev => ({
@@ -195,29 +274,52 @@ export default function GenerateContent() {
 
     try {
       const formData = new FormData();
-      formData.append("template", template.template);
+      formData.append("session_id", sessionId);
+      formData.append("template", template.template); // Always include the latest HTML template
       formData.append("prompt", editPrompt);
+      // Note: template_id is optional and expects an integer, so we omit it
+      // Include full chat history for complete context
+      try {
+        formData.append(
+          "chat_history",
+          JSON.stringify(
+            (chatHistory || []).map((entry) => ({
+              user_message: entry.user_message,
+              ai_response: entry.ai_response,
+              created_at: entry.created_at,
+            }))
+          )
+        );
+      } catch (_) {
+        // no-op if serialization fails
+      }
 
-      const response = await axios.post("http://localhost:8000/generate-image/", formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        responseType: 'blob',
+      const response = await apiEndpoints.generateWithContext(formData);
+
+      const newTemplate = response.data.template;
+      
+      // Update the existing template with new HTML
+      setGeneratedTemplates(prev => prev.map(t => 
+        t.id === template.id 
+          ? { ...t, template: newTemplate, previewLoading: true }
+          : t
+      ));
+
+      // Regenerate preview image for this template
+      generatePreviewForTemplate({
+        id: template.id,
+        template: newTemplate,
+        platform: template.platform,
+        size: template.size,
       });
 
-      const blob = response.data;
-      const url = URL.createObjectURL(blob);
-      
-      // Update the existing template with new image
-      setGeneratedImages(prev => ({
-        ...prev,
-        [template.id]: {
-          url,
-          width: template.dimensions.width,
-          height: template.dimensions.height,
-          size: blob.size
-        }
-      }));
+      // Update local chat history (backend automatically saves HTML template to chat context)
+      setChatHistory(prev => [...prev, {
+        id: Date.now(),
+        user_message: editPrompt,
+        ai_response: "Template updated successfully",
+        created_at: new Date().toISOString()
+      }]);
 
       // Close edit mode and clear prompt
       setEditingTemplates(prev => ({
@@ -265,6 +367,33 @@ export default function GenerateContent() {
               </div>
               
               <div className="p-6 space-y-6">
+                {/* Chat History */}
+                {chatHistory.length > 0 && (
+                  <div className="border border-gray-200 rounded-lg bg-gray-50 p-4">
+                    <div className="flex justify-between items-center mb-3">
+                      <h4 className="text-sm font-medium text-gray-900">Conversation History</h4>
+                      <button 
+                        onClick={clearChatHistory}
+                        className="text-xs text-gray-600 hover:text-red-600 border border-gray-300 px-2 py-1 rounded transition-colors"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <div className="space-y-2 max-h-24 overflow-y-auto">
+                      {chatHistory.map((chat, index) => (
+                        <div key={index} className="text-xs">
+                          <div className="text-gray-600">
+                            <strong>You:</strong> {chat.user_message}
+                          </div>
+                          <div className="text-gray-500 ml-2">
+                            <strong>AI:</strong> {chat.ai_response}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Platform Selection */}
                 <div>
                   <label className="block text-sm font-medium text-gray-900 mb-3">
@@ -367,85 +496,20 @@ export default function GenerateContent() {
                 
                 <div className="space-y-8">
                   {generatedTemplates.map((template) => {
-                    const imageData = generatedImages[template.id];
-                    const isLoading = imageGenerationLoading[template.id];
-                    
-                    // Calculate realistic preview size while maintaining aspect ratio
-                    const maxWidth = 400;
-                    const maxHeight = 300;
-                    const aspectRatio = template.dimensions.width / template.dimensions.height;
-                    
-                    let previewWidth, previewHeight;
-                    if (aspectRatio > 1) {
-                      // Landscape
-                      previewWidth = Math.min(maxWidth, template.dimensions.width * 0.3);
-                      previewHeight = previewWidth / aspectRatio;
-                    } else {
-                      // Portrait or square
-                      previewHeight = Math.min(maxHeight, template.dimensions.height * 0.3);
-                      previewWidth = previewHeight * aspectRatio;
-                    }
+                    const currentTab = activeTab[template.id] || 'preview';
                     
                     return (
-                      <div key={template.id} className="border border-gray-200 rounded-lg bg-white p-6">
-                        <div className="mb-4">
-                          <h4 className="font-semibold text-gray-900 text-lg">
-                            {template.platform} - {template.size}
-                          </h4>
-                          <p className="text-sm text-gray-500">
-                            {template.dimensions.width} × {template.dimensions.height} pixels
-                          </p>
-                        </div>
-                        
-                        {/* Realistic Preview Container */}
-                        <div className="flex justify-center mb-4">
-                          <div 
-                            className="border-2 border-gray-300 rounded-lg bg-gray-50 shadow-lg overflow-hidden"
-                            style={{
-                              width: `${previewWidth}px`,
-                              height: `${previewHeight}px`,
-                              minWidth: '120px',
-                              minHeight: '80px'
-                            }}
-                          >
-                            {/* Generated Image */}
-                            {imageData ? (
-                              <img 
-                                src={imageData.url}
-                                alt={`${template.platform} ${template.size}`}
-                                className="w-full h-full object-cover"
-                                style={{
-                                  width: '100%',
-                                  height: '100%'
-                                }}
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center bg-gray-100">
-                                {isLoading ? (
-                                  <div className="text-center">
-                                    <div className="animate-spin rounded-full h-6 w-6 border-2 border-gray-400 border-t-blue-600 mx-auto mb-2"></div>
-                                    <div className="text-xs text-gray-600">Generating...</div>
-                                  </div>
-                                ) : (
-                                  <div className="text-center">
-                                    <div className="text-xs text-gray-500 mb-2">No image yet</div>
-                                    <button
-                                      onClick={() => generateImageForTemplate(template)}
-                                      className="bg-gray-600 text-white px-3 py-1 rounded text-xs hover:bg-gray-700 transition-colors"
-                                    >
-                                      Generate
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        
-                        {/* Image Info and Actions */}
-                        {imageData && (
-                          <div className="flex justify-between items-center text-sm text-gray-500">
-                            <span>File size: {(imageData.size / 1024).toFixed(1)} KB</span>
+                      <div key={template.id} className="border border-gray-200 rounded-lg bg-white">
+                        <div className="p-6 border-b border-gray-200">
+                          <div className="flex justify-between items-center mb-4">
+                            <div>
+                              <h4 className="font-semibold text-gray-900 text-lg">
+                                {template.platform} - {template.size}
+                              </h4>
+                              <p className="text-sm text-gray-500">
+                                {template.dimensions.width} × {template.dimensions.height} pixels
+                              </p>
+                            </div>
                             <div className="flex space-x-2">
                               <button
                                 onClick={() => toggleEditMode(template.id)}
@@ -454,18 +518,108 @@ export default function GenerateContent() {
                                 {editingTemplates[template.id] ? 'Cancel' : 'Edit'}
                               </button>
                               <button
-                                onClick={() => downloadTemplateImage(template.id)}
+                                onClick={() => generateImageForTemplate(template)}
                                 className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 transition-colors font-medium"
                               >
-                                Download
+                                Download Image
                               </button>
                             </div>
                           </div>
-                        )}
+                          
+                          {/* Tab Navigation */}
+                          <div className="flex border-b border-gray-200">
+                            <button
+                              onClick={() => setActiveTab(prev => ({ ...prev, [template.id]: 'preview' }))}
+                              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                                currentTab === 'preview' 
+                                  ? "text-black border-b-2 border-black" 
+                                  : "text-gray-600 hover:text-black"
+                              }`}
+                            >
+                              Preview
+                            </button>
+                            <button
+                              onClick={() => setActiveTab(prev => ({ ...prev, [template.id]: 'code' }))}
+                              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                                currentTab === 'code' 
+                                  ? "text-black border-b-2 border-black" 
+                                  : "text-gray-600 hover:text-black"
+                              }`}
+                            >
+                              HTML Code
+                            </button>
+                          </div>
+                        </div>
+                        
+                        <div className="p-6">
+                          {/* Preview Tab */}
+                          {currentTab === 'preview' && (
+                            <div className="w-full">
+                              <div className="flex justify-center mb-4">
+                                <div className="text-sm text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
+                                  Preview: {template.dimensions.width} × {template.dimensions.height}px
+                                </div>
+                              </div>
+                              <div className="flex justify-center items-center min-h-[500px] bg-gray-50 rounded-lg p-8">
+                                <div 
+                                  className="shadow-2xl rounded-lg max-w-[1200px] max-h-[800px] border-2 border-gray-200 flex items-center justify-center"
+                                  style={{
+                                    width: `${Math.min(1200, template.dimensions.width)}px`,
+                                    height: `${Math.min(800, template.dimensions.height)}px`,
+                                    minWidth: '400px',
+                                    minHeight: '300px',
+                                    maxWidth: '95vw',
+                                    maxHeight: '80vh',
+                                  }}
+                                >
+                                  {template.previewLoading ? (
+                                    <div className="flex items-center text-sm text-gray-600">
+                                      <div className="animate-spin rounded-full h-5 w-5 border-2 border-gray-400 border-t-transparent mr-3"></div>
+                                      Generating preview image...
+                                    </div>
+                                  ) : template.previewUrl ? (
+                                    <img 
+                                      src={template.previewUrl} 
+                                      alt={`${template.platform} ${template.size} preview`} 
+                                      className="object-contain w-full h-full"
+                                    />
+                                  ) : (
+                                    <div className="text-sm text-gray-500">Preview unavailable. Try downloading the image.</div>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="text-center mt-4">
+                                <p className="text-xs text-gray-500">Image preview shown. Use Download for a PNG file.</p>
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Code Tab */}
+                          {currentTab === 'code' && (
+                            <div>
+                              <div className="mb-4 flex justify-between items-center">
+                                <h5 className="text-sm font-medium text-gray-900">HTML Template</h5>
+                                <button 
+                                  onClick={() => navigator.clipboard.writeText(template.template)}
+                                  className="text-xs text-gray-600 hover:text-black border border-gray-300 px-3 py-1 rounded transition-colors"
+                                >
+                                  Copy
+                                </button>
+                              </div>
+                              <textarea
+                                className="w-full p-4 border border-gray-200 rounded-lg font-mono text-xs bg-gray-50 focus:bg-white focus:border-black focus:ring-1 focus:ring-black transition-colors"
+                                rows="20"
+                                value={template.template}
+                                readOnly
+                                placeholder="HTML template will appear here..."
+                              />
+                            </div>
+                          )}
+                        </div>
 
                         {/* Inline Edit Section */}
                         {editingTemplates[template.id] && (
-                          <div className="mt-4 p-4 border border-gray-200 rounded-lg bg-gray-50">
+                          <div className="p-6 border-t border-gray-200 bg-gray-50">
                             <div className="space-y-3">
                               <label className="block text-sm font-medium text-gray-900">
                                 Edit Instructions
@@ -473,13 +627,14 @@ export default function GenerateContent() {
                               <textarea
                                 className="w-full p-3 border border-gray-300 rounded-lg focus:border-black focus:ring-1 focus:ring-black transition-colors resize-none text-sm"
                                 rows="3"
-                                placeholder="Describe what changes you want to make to this creative..."
+                                placeholder="Describe what changes you want to make to this template..."
                                 value={editPrompts[template.id] || ""}
                                 onChange={e => handleEditPromptChange(template.id, e.target.value)}
                               />
                               <div className="flex justify-between items-center">
                                 <div className="text-xs text-gray-500">
                                   {(editPrompts[template.id] || "").length} characters
+                                  <span className="ml-2 text-blue-600">💡 AI has access to the current HTML template and chat history</span>
                                 </div>
                                 <button
                                   onClick={() => handleSaveEdit(template)}
@@ -492,7 +647,7 @@ export default function GenerateContent() {
                                       Updating...
                                     </div>
                                   ) : (
-                                    "Update Creative"
+                                    "Apply Changes"
                                   )}
                                 </button>
                               </div>

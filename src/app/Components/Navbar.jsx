@@ -18,7 +18,7 @@ const Navbar = () => {
         <div className="flex items-center space-x-3">
           <Link href="/" className={`text-md text-gray-900 flex items-center gap-x-12 ${getActiveTab() === "home" ? "text-black font-bold" : "text-gray-900"}`}>
             <img src="https://trycarter.com/images/carter-logo.svg" alt="Creative Studio" width={102} height={82} />
-            Creative Studio
+            Edit our Template
           </Link>
           <Link
             href="/generate-content"
